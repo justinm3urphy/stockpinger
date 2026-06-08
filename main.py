@@ -24,9 +24,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Welcome to Stock Pinger Bot! 📈\n\n"
         "I can monitor stocks and alert you when they hit your targets.\n\n"
         "Commands:\n"
-        "/add <symbol> <target_price> - Alert when stock drops below OR rises above price (automatically detected). (e.g. /add AAPL 150)\n"
-        "/add_pct <symbol> <percent> - Alert when stock drops by percent (e.g. /add_pct TSLA 5)\n"
-        "/add_pct_up <symbol> <percent> - Alert when stock rises by percent (e.g. /add_pct_up NVDA 10)\n"
+        "/add <symbol> <target_price> - Alert when stock hits an absolute price (e.g. /add AAPL 150)\n"
+        "/add_val <symbol> <amount> - Alert when stock DROPS by a specific $ amount (e.g. /add_val TSLA 5)\n"
+        "/add_val_up <symbol> <amount> - Alert when stock RISES by a specific $ amount (e.g. /add_val_up NVDA 10)\n"
+        "/add_pct <symbol> <percent> - Alert when stock DROPS by a percent (e.g. /add_pct TSLA 5)\n"
+        "/add_pct_up <symbol> <percent> - Alert when stock RISES by a percent\n"
         "/list - See your current watchlist\n"
         "/remove <symbol> - Remove a stock from watchlist\n"
     )
@@ -62,6 +64,68 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = (f"✅ Added {symbol} to watchlist.\n"
            f"Current price: ${current_price:.2f}\n"
            f"Alert set for when price {dir_text}: ${target_price:.2f}")
+    await update.message.reply_text(msg)
+
+async def add_val(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Add a stock with absolute amount drop target."""
+    chat_id = update.effective_chat.id
+    args = context.args
+
+    if len(args) != 2:
+        await update.message.reply_text("Usage: /add_val <symbol> <dollar_drop>\nExample: /add_val TSLA 5")
+        return
+
+    symbol = args[0].upper()
+    try:
+        val_drop = float(args[1])
+        if val_drop <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("Please provide a valid positive number for the amount to drop.")
+        return
+
+    current_price = stock_api.get_stock_price(symbol)
+    if current_price is None:
+        await update.message.reply_text(f"Could not fetch data for '{symbol}'. Is the symbol correct?")
+        return
+
+    target_price = current_price - val_drop
+    storage.add_stock(chat_id, symbol, target_type='price', target_value=target_price, direction='below')
+    
+    msg = (f"✅ Added {symbol} to watchlist.\n"
+           f"Current price: ${current_price:.2f}\n"
+           f"Alert set for a ${val_drop:.2f} DROP (<= ${target_price:.2f})")
+    await update.message.reply_text(msg)
+
+async def add_val_up(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Add a stock with absolute amount rise target."""
+    chat_id = update.effective_chat.id
+    args = context.args
+
+    if len(args) != 2:
+        await update.message.reply_text("Usage: /add_val_up <symbol> <dollar_rise>\nExample: /add_val_up TSLA 5")
+        return
+
+    symbol = args[0].upper()
+    try:
+        val_rise = float(args[1])
+        if val_rise <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("Please provide a valid positive number for the amount to rise.")
+        return
+
+    current_price = stock_api.get_stock_price(symbol)
+    if current_price is None:
+        await update.message.reply_text(f"Could not fetch data for '{symbol}'. Is the symbol correct?")
+        return
+
+    target_price = current_price + val_rise
+    storage.add_stock(chat_id, symbol, target_type='price', target_value=target_price, direction='above')
+    
+    msg = (f"✅ Added {symbol} to watchlist.\n"
+           f"Current price: ${current_price:.2f}\n"
+           f"Alert set for a ${val_rise:.2f} RISE (>= ${target_price:.2f})")
     await update.message.reply_text(msg)
 
 async def add_pct(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -138,18 +202,20 @@ async def list_stocks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     lines = ["📋 **Your Watchlist:**"]
     for symbol, data in watchlist.items():
         direction = data.get('direction', 'below') # default below for old entries
+        alerted = data.get('alerted', False)
         dir_symbol = ">=" if direction == 'above' else "<="
         dir_text = "RISE" if direction == 'above' else "DROP"
+        status_icon = "🔔(Already Alerted)" if alerted else "⏳(Waiting)"
         
         if data['target_type'] == 'price':
-            lines.append(f"• {symbol}: Alert when {dir_symbol} ${data['target_value']:.2f}")
+            lines.append(f"• {symbol}: Alert when {dir_symbol} ${data['target_value']:.2f} {status_icon}")
         elif data['target_type'] == 'percent':
             baseline = data['baseline_price']
             if direction == 'above':
                 target = baseline * (1 + (data['target_value'] / 100))
             else:
                 target = baseline * (1 - (data['target_value'] / 100))
-            lines.append(f"• {symbol}: Alert on {data['target_value']}% {dir_text} (from ${baseline:.2f}, target: {dir_symbol} ${target:.2f})")
+            lines.append(f"• {symbol}: Alert on {data['target_value']}% {dir_text} (from ${baseline:.2f}, target: {dir_symbol} ${target:.2f}) {status_icon}")
             
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -179,9 +245,11 @@ async def check_prices(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for chat_id_str, user_watchlist in all_watchlists.items():
         chat_id = int(chat_id_str)
-        stocks_to_remove = []
 
         for symbol, data in user_watchlist.items():
+            if data.get('alerted', False):
+                continue
+
             if symbol not in price_cache:
                 price = stock_api.get_stock_price(symbol)
                 price_cache[symbol] = price
@@ -217,13 +285,9 @@ async def check_prices(context: ContextTypes.DEFAULT_TYPE) -> None:
             if alert_triggered:
                 try:
                     await context.bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
-                    # Remove from watchlist after alert to avoid spam
-                    stocks_to_remove.append(symbol)
+                    storage.mark_alerted(chat_id, symbol)
                 except Exception as e:
                     logger.error(f"Failed to send message to {chat_id}: {e}")
-
-        for symbol in stocks_to_remove:
-            storage.remove_stock(chat_id, symbol)
 
 
 def main() -> None:
@@ -236,6 +300,8 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("add", add_stock))
+    application.add_handler(CommandHandler("add_val", add_val))
+    application.add_handler(CommandHandler("add_val_up", add_val_up))
     application.add_handler(CommandHandler("add_pct", add_pct))
     application.add_handler(CommandHandler("add_pct_up", add_pct_up))
     application.add_handler(CommandHandler("list", list_stocks))

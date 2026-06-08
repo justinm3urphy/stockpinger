@@ -31,7 +31,8 @@ def add_stock(chat_id, symbol, target_type, target_value, direction='below', cur
         "target_type": target_type,
         "target_value": target_value,
         "direction": direction,
-        "baseline_price": current_price
+        "baseline_price": current_price,
+        "alerted": False
     }
     save_watchlist(watchlist)
 
@@ -43,6 +44,13 @@ def remove_stock(chat_id, symbol):
         save_watchlist(watchlist)
         return True
     return False
+
+def mark_alerted(chat_id, symbol):
+    watchlist = load_watchlist()
+    chat_id_str = str(chat_id)
+    if chat_id_str in watchlist and symbol in watchlist[chat_id_str]:
+        watchlist[chat_id_str][symbol]["alerted"] = True
+        save_watchlist(watchlist)
 
 def get_user_watchlist(chat_id):
     watchlist = load_watchlist()
