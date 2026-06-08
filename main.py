@@ -24,7 +24,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Welcome to Stock Pinger Bot! 📈\n\n"
         "I can monitor stocks and alert you when they hit your targets.\n\n"
         "Commands:\n"
-        "/add <symbol> <target_price> - Alert when stock hits an absolute price (e.g. /add AAPL 150)\n"
+        "/add_below <symbol> <price> - Alert when price drops below OR hits this target (e.g. /add_below AAPL 150)\n"
+        "/add_above <symbol> <price> - Alert when price rises above OR hits this target (e.g. /add_above AAPL 200)\n"
         "/add_val <symbol> <amount> - Alert when stock DROPS by a specific $ amount (e.g. /add_val TSLA 5)\n"
         "/add_val_up <symbol> <amount> - Alert when stock RISES by a specific $ amount (e.g. /add_val_up NVDA 10)\n"
         "/add_pct <symbol> <percent> - Alert when stock DROPS by a percent (e.g. /add_pct TSLA 5)\n"
@@ -34,13 +35,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(welcome_message)
 
-async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Add a stock with absolute target price."""
+async def add_below(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Add a stock with absolute target price, alert when BELOW."""
     chat_id = update.effective_chat.id
     args = context.args
 
     if len(args) != 2:
-        await update.message.reply_text("Usage: /add <symbol> <target_price>\nExample: /add AAPL 150")
+        await update.message.reply_text("Usage: /add_below <symbol> <target_price>\nExample: /add_below AAPL 150")
         return
 
     symbol = args[0].upper()
@@ -55,15 +56,39 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"Could not fetch data for '{symbol}'. Is the symbol correct?")
         return
 
-    # Automatically detect if we should wait for it to drop or rise
-    direction = 'above' if target_price >= current_price else 'below'
+    storage.add_stock(chat_id, symbol, target_type='price', target_value=target_price, direction='below', current_price=current_price)
     
-    storage.add_stock(chat_id, symbol, target_type='price', target_value=target_price, direction=direction)
-    
-    dir_text = "goes ABOVE or hits" if direction == 'above' else "drops BELOW or hits"
     msg = (f"✅ Added {symbol} to watchlist.\n"
            f"Current price: ${current_price:.2f}\n"
-           f"Alert set for when price {dir_text}: ${target_price:.2f}")
+           f"Alert set for when price drops BELOW or hits: ${target_price:.2f}")
+    await update.message.reply_text(msg)
+
+async def add_above(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Add a stock with absolute target price, alert when ABOVE."""
+    chat_id = update.effective_chat.id
+    args = context.args
+
+    if len(args) != 2:
+        await update.message.reply_text("Usage: /add_above <symbol> <target_price>\nExample: /add_above AAPL 200")
+        return
+
+    symbol = args[0].upper()
+    try:
+        target_price = float(args[1])
+    except ValueError:
+        await update.message.reply_text("Please provide a valid number for the target price.")
+        return
+
+    current_price = stock_api.get_stock_price(symbol)
+    if current_price is None:
+        await update.message.reply_text(f"Could not fetch data for '{symbol}'. Is the symbol correct?")
+        return
+
+    storage.add_stock(chat_id, symbol, target_type='price', target_value=target_price, direction='above', current_price=current_price)
+    
+    msg = (f"✅ Added {symbol} to watchlist.\n"
+           f"Current price: ${current_price:.2f}\n"
+           f"Alert set for when price goes ABOVE or hits: ${target_price:.2f}")
     await update.message.reply_text(msg)
 
 async def add_val(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -299,7 +324,8 @@ def main() -> None:
     application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("add", add_stock))
+    application.add_handler(CommandHandler("add_below", add_below))
+    application.add_handler(CommandHandler("add_above", add_above))
     application.add_handler(CommandHandler("add_val", add_val))
     application.add_handler(CommandHandler("add_val_up", add_val_up))
     application.add_handler(CommandHandler("add_pct", add_pct))
