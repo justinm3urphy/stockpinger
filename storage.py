@@ -16,10 +16,11 @@ def save_watchlist(watchlist):
     with open(WATCHLIST_FILE, "w") as f:
         json.dump(watchlist, f, indent=4)
 
-def add_stock(chat_id, symbol, target_type, target_value, current_price=None):
+def add_stock(chat_id, symbol, target_type, target_value, direction='below', current_price=None):
     """
     target_type: 'price' or 'percent'
     target_value: float (e.g., 150.50 for price, or 5.0 for percent)
+    direction: 'above' or 'below'
     """
     watchlist = load_watchlist()
     chat_id_str = str(chat_id)
@@ -29,7 +30,8 @@ def add_stock(chat_id, symbol, target_type, target_value, current_price=None):
     watchlist[chat_id_str][symbol] = {
         "target_type": target_type,
         "target_value": target_value,
-        "baseline_price": current_price  # Only relevant for 'percent' target
+        "direction": direction,
+        "baseline_price": current_price
     }
     save_watchlist(watchlist)
 
